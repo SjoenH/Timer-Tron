@@ -3,49 +3,90 @@
 #include "secrets.h"
 
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
-// Adjust these values to match your project
-const int numButtons = 3;                                                 // Number of buttons
-const int buttonPins[numButtons] = {6, 7, 8};                             // Array of button pins
-int ledPins[numButtons] = {1, 2, 3};                                      // Array of LED pins
-const String projects[numButtons] = {"KraftBank", "MindFit", "Internal"}; // Array of project names
+// Add your timer names here, eg: KraftBank, MindFit, Internal
+const String timers[] = {"KraftBank", "MindFit", "Internal"};
+
+// Variable to store number of timers, no need to change
+const int numTimers = sizeof(timers) / sizeof(timers[0]);
+
+// Add your LED-mapped pins here, eg: KraftBank <=> 1, MindFit <=> 2, Internal <=> 3
+int ledPins[numTimers] = {1, 2, 3};
+
+// Add your button-mapped pins here, eg: KraftBank <=> 6, MindFit <=> 7, Internal <=> 8
+const int buttonPins[numTimers] = {6, 7, 8};
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 
-bool buttonState[numButtons] = {false};      // Array to keep track of button state
-bool projectIsRunning[numButtons] = {false}; // Array to keep track of project state
+bool buttonState[numTimers] = {false};      // Array to keep track of button state
+bool projectIsRunning[numTimers] = {false}; // Array to keep track of project state
 int status = WL_IDLE_STATUS;
 
+/// @brief Arduino setup function
 void setup()
 {
-  for (int i = 0; i < numButtons; i++)
+  for (int i = 0; i < numTimers; i++)
   {
     pinMode(buttonPins[i], INPUT_PULLUP);
     pinMode(ledPins[i], OUTPUT);
   }
 
   Serial.begin(9600);
+}
 
-  // attempt to connect to WiFi network
-  while (status != WL_CONNECTED)
+int WIFI_CONNECTION_TIMEOUT = 60000; // 60 seconds
+
+void blinkLEDs(unsigned long delay_time)
+{
+  static unsigned long previous_millis = 0;
+  static bool led_state = false;
+
+  if (millis() - previous_millis >= delay_time)
+  {
+    previous_millis = millis();
+    led_state = !led_state;
+    for (int i = 0; i < numTimers; i++)
+    {
+      digitalWrite(ledPins[i], led_state);
+    }
+  }
+}
+void connectToWiFi()
+{
+  int status = WiFi.status();
+  unsigned long start_time = millis();
+
+  while (status != WL_CONNECTED && millis() - start_time < WIFI_CONNECTION_TIMEOUT)
   {
     Serial.print("Attempting to connect to SSID: ");
     Serial.println(WIFI_SSID);
     status = WiFi.begin(WIFI_SSID, WIFI_PASS);
-    delay(10000);
+    blinkLEDs(500); // blink LEDs while connecting
   }
 
   if (status == WL_CONNECTED)
   {
-    Serial.print("Wifi connected!");
+    // Todo: Only print when it changes
+    // Serial.print("Wifi connected!");
+    blinkLEDs(1000); // blink LEDs twice to indicate connection established
+    blinkLEDs(1000);
+  }
+  else
+  {
+    Serial.print("Unable to connect to WiFi");
+    blinkLEDs(2000); // blink LEDs three times to indicate connection failure
+    blinkLEDs(2000);
+    blinkLEDs(2000);
   }
 }
 
+/// @brief buttonPressed() is called when a button is pressed
+/// @param button The button that was pressed
 void buttonPressed(int button)
 {
   Serial.println("Button " + String(button) + " pressed");
 
   // Construct URL for API call
   String endpoint = projectIsRunning[button] ? "/stop" : "/start";
-  String url = String("http://") + String(API_HOST) + String(":") + String(API_PORT) + endpoint + "?project=" + String(projects[button]);
+  String url = String("http://") + String(API_HOST) + String(":") + String(API_PORT) + endpoint + "?project=" + String(timers[button]);
 
   Serial.println("API URL: " + url);
 
@@ -77,51 +118,62 @@ void buttonPressed(int button)
   projectIsRunning[button] = !projectIsRunning[button];
 }
 
+// Button debouncing variables
+const int DEBOUNCE_DELAY = 50; // debounce delay in ms
+unsigned long lastDebounceTime[numTimers] = {0};
+
+/// @brief Reads the buttons and calls buttonPressed() if a button is pressed
 void readButtons()
 {
-  for (int i = 0; i < numButtons; i++)
+  for (int i = 0; i < numTimers; i++)
   {
-    bool currentState = digitalRead(buttonPins[i]) == LOW;
-    if (currentState && !buttonState[i])
+    int reading = digitalRead(buttonPins[i]);
+    if (reading != buttonState[i])
     {
-      buttonState[i] = true;
-      buttonPressed(i);
+      lastDebounceTime[i] = millis();
     }
-    else if (!currentState && buttonState[i])
+    if ((millis() - lastDebounceTime[i]) > DEBOUNCE_DELAY)
     {
-      buttonState[i] = false;
+      lastDebounceTime[i] = millis();
+      if (reading != buttonState[i])
+      {
+        buttonState[i] = reading;
+        if (buttonState[i] == LOW)
+        {
+          buttonPressed(i);
+        }
+      }
     }
   }
 }
 
+/// @brief  Updates the LEDs to match the project status
 void updateLEDs()
 {
-  for (int i = 0; i < numButtons; i++)
+  for (int i = 0; i < numTimers; i++)
   {
     digitalWrite(ledPins[i], projectIsRunning[i] ? HIGH : LOW);
   }
 }
 
 long lastUpdateTime = 0;
-void updateProjectStatus()
+/// @brief Fetches the currently running timers from the API and updates the projectIsRunning array
+void fetchAndUpdateTimers()
 {
+  // Only update every 10 seconds
   if (millis() - lastUpdateTime < 10000)
   {
     return;
   }
   lastUpdateTime = millis();
-  Serial.println("Updating project status");
 
-  // Todo: Do not block the main loop
-  // Make GET request to get running projects
-  String url = String("http://") + String(API_HOST) + String(":") + String(API_PORT) + "/running";
+  String url = "http://" + String(API_HOST) + ":" + String(API_PORT) + "/running";
   WiFiClient client;
   if (client.connect(API_HOST, API_PORT))
   {
-    client.println("GET " + url + " HTTP/1.1");
-    client.println("Host: " + String(API_HOST));
-    client.println("Connection: close");
-    client.println();
+    client.print("GET " + url + " HTTP/1.1\r\n" +
+                 "Host: " + String(API_HOST) + "\r\n" +
+                 "Connection: close\r\n\r\n");
   }
   else
   {
@@ -129,46 +181,38 @@ void updateProjectStatus()
     return;
   }
 
-  // Read response from server
-  Serial.println("Reading response");
   String response = "";
   while (client.connected())
   {
-    String line = client.readStringUntil('\n');
-    response += line;
+    response += client.readString();
   }
   client.stop();
 
-  // Parse response and update project status
-  for (int i = 0; i < numButtons; i++)
+  for (int i = 0; i < numTimers; i++)
   {
     bool isRunning = false;
     for (int j = 0; j < response.length(); j++)
     {
-      String projectName = "\"" + projects[i] + "\"";
+      String projectName = "\"" + timers[i] + "\"";
       if (response.indexOf(projectName) != -1)
       {
         isRunning = true;
         break;
       }
     }
-    Serial.println(projects[i] + " is running: " + isRunning);
+    Serial.println(timers[i] + " is running: " + isRunning);
     projectIsRunning[i] = isRunning;
   }
-  Serial.println("Done updating project status");
 }
 
+/// @brief Arduino loop function - The main loop of the program
 void loop()
 {
-  // wait for WiFi connection
-  if (WiFi.status() != WL_CONNECTED)
-  {
-    Serial.println("WiFi not connected");
-    return;
-  }
-
+  connectToWiFi();
+  fetchAndUpdateTimers();
   readButtons();
   updateLEDs();
-  updateProjectStatus();
-  delay(12);
 }
+
+// Q: The buttons are not working, what can I do?
+// A: Try to increase the debounce delay (DEBOUNCE_DELAY) in the code. If that doesn't work, try to add a capacitor between the button and the ground pin.
