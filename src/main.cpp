@@ -4,10 +4,10 @@
 
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 // Adjust these values to match your project
-const int numButtons = 3;                                                 // Number of buttons
-const int buttonPins[numButtons] = {6, 7, 8};                             // Array of button pins
-int ledPins[numButtons] = {1, 2, 3};                                      // Array of LED pins
-const String projects[numButtons] = {"KraftBank", "MindFit", "Internal"}; // Array of project names
+const int numButtons = 3;                                                        // Number of buttons
+const int buttonPins[numButtons] = {6, 7, 8};                                    // Array of button pins
+int ledPins[numButtons] = {1, 2, 3};                                             // Array of LED pins
+const String projects[numButtons] = {"KraftBank", "MilesDashboard", "Internal"}; // Array of project names
 // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // // //
 
 bool buttonState[numButtons] = {false};      // Array to keep track of button state
@@ -158,17 +158,23 @@ void updateProjectStatus()
   Serial.println("Done updating project status");
 }
 
+bool needToUpdate = true;
 void loop()
 {
   // wait for WiFi connection
   if (WiFi.status() != WL_CONNECTED)
   {
+    needToUpdate = true;
     Serial.println("WiFi not connected");
     return;
   }
 
   readButtons();
   updateLEDs();
-  updateProjectStatus();
+  if (needToUpdate)
+  {
+    updateProjectStatus();
+    needToUpdate = false;
+  }
   delay(12);
 }
